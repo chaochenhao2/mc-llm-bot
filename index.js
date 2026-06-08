@@ -21,6 +21,14 @@ if (!API_KEY) {
   console.error('错误: 环境变量 API_KEY 是必需的');
   process.exit(1);
 }
+if (isNaN(MC_PORT) || MC_PORT < 1 || MC_PORT > 65535) {
+  console.error('错误: MC_PORT 必须是 1-65535 之间的数字');
+  process.exit(1);
+}
+if (isNaN(DECISION_INTERVAL) || DECISION_INTERVAL < 100) {
+  console.error('错误: DECISION_INTERVAL 必须是 >= 100 的数字（毫秒）');
+  process.exit(1);
+}
 
 const openai = new OpenAI({
   baseURL: API_URL,
@@ -232,7 +240,7 @@ async function executeAction(action) {
       case 'moveTo': {
         const target = new Vec3(parameters.x, parameters.y, parameters.z);
         const goal = new (require('mineflayer-pathfinder').goals.GoalNear)(target.x, target.y, target.z, 1);
-        await bot.pathfinder.goto(goal);
+        await withTimeout(bot.pathfinder.goto(goal), 15000);
         return `移动到 (${parameters.x}, ${parameters.y}, ${parameters.z})`;
       }
       case 'follow': {
@@ -251,7 +259,7 @@ async function executeAction(action) {
         return '已停止跟随';
       }
       case 'lookAt': {
-        await bot.lookAt(new Vec3(parameters.x, parameters.y, parameters.z));
+        await withTimeout(bot.lookAt(new Vec3(parameters.x, parameters.y, parameters.z)), 5000);
         return `看向 (${parameters.x}, ${parameters.y}, ${parameters.z})`;
       }
       case 'chat': {
@@ -261,7 +269,7 @@ async function executeAction(action) {
       case 'mineBlock': {
         const block = bot.blockAt(new Vec3(parameters.x, parameters.y, parameters.z));
         if (block && block.name !== 'air') {
-          await bot.dig(block);
+          await withTimeout(bot.dig(block), 30000);
           return `挖掘了 ${block.name} 在 (${parameters.x}, ${parameters.y}, ${parameters.z})`;
         }
         return `在 (${parameters.x}, ${parameters.y}, ${parameters.z}) 没有可挖掘的方块`;
@@ -280,7 +288,7 @@ async function executeAction(action) {
           || bot.blockAt(targetPos.offset(-1, 0, 0))
           || bot.blockAt(targetPos.offset(0, 0, 1));
         if (!refBlock || refBlock.name === 'air') return `目标位置附近没有可放置的参考方块`;
-        await bot.placeBlock(refBlock);
+        await withTimeout(bot.placeBlock(refBlock), 10000);
         return `放置了 ${parameters.blockName}`;
       }
       case 'equip': {
@@ -317,10 +325,9 @@ async function executeAction(action) {
       case 'goToPlayer': {
         const { GoalNear } = require('mineflayer-pathfinder').goals;
         const target = bot.players[parameters.username];
-        const entity = target?.entity;
-        const pos = entity?.position || bot.players[parameters.username]?.entity?.position;
+        const pos = target?.entity?.position;
         if (pos) {
-          await bot.pathfinder.goto(new GoalNear(pos.x, pos.y, pos.z, 1));
+          await withTimeout(bot.pathfinder.goto(new GoalNear(pos.x, pos.y, pos.z, 1)), 15000);
           return `已移动到玩家 ${parameters.username} 身边`;
         }
         return `找不到玩家 ${parameters.username}`;
@@ -357,25 +364,25 @@ async function executeAction(action) {
         if (!bot.heldItem || bot.heldItem.type !== food.type) {
           await bot.equip(food, 'hand');
         }
-        await bot.consume();
+        await withTimeout(bot.consume(), 10000);
         return `吃了 ${food.name}`;
       }
       case 'sleep': {
         const bed = bot.findBlock({ matching: block => block.name.includes('bed'), maxDistance: 6 });
         if (!bed) return '附近没有床';
-        await bot.sleep(bed);
+        await withTimeout(bot.sleep(bed), 10000);
         return '正在睡觉';
       }
       case 'activateBlock': {
         const block = bot.blockAt(new Vec3(parameters.x, parameters.y, parameters.z));
         if (!block) return '该位置没有方块';
-        await bot.activateBlock(block);
+        await withTimeout(bot.activateBlock(block), 10000);
         return `激活了 ${block.name}`;
       }
       case 'openContainer': {
         const containerBlock = bot.blockAt(new Vec3(parameters.x, parameters.y, parameters.z));
         if (!containerBlock) return '该位置没有方块';
-        const container = await bot.openContainer(containerBlock);
+        const container = await withTimeout(bot.openContainer(containerBlock), 10000);
         bot._currentContainer = container;
         return `打开了 ${containerBlock.name}`;
       }
@@ -406,7 +413,7 @@ async function executeAction(action) {
         if (!itemType) return `未知物品: ${parameters.itemName}`;
         const recipes = bot.recipesFor(itemType, null, 1, true);
         if (!recipes || recipes.length === 0) return `没有 ${parameters.itemName} 的合成配方`;
-        await bot.craft(recipes[0], parameters.count || 1, craftingTable);
+        await withTimeout(bot.craft(recipes[0], parameters.count || 1, craftingTable), 30000);
         return `合成了 ${parameters.count || 1} 个 ${parameters.itemName}`;
       }
       case 'farm': {
@@ -498,28 +505,28 @@ async function thinkAndAct() {
     if (!cachedSystemContent) {
       cachedSystemContent = `${BOT_ROLE}
 
-You are a Minecraft bot that can perceive the world and take actions.
-You must decide what to do autonomously based on your role, current state, and surroundings.
+你是一个Minecraft机器人，可以感知世界并执行动作。
+你需要基于你的角色、当前状态和周围环境来自主决定下一步做什么。
 
-## Available Actions
+## 可用动作
 ${ACTION_DEFINITIONS.map(a => {
   const params = Object.entries(a.parameters).map(([k, v]) => `  - ${k} (${v.type}): ${v.description}`).join('\n');
-  return `### ${a.name}\n${a.description}\nParameters:\n${params || '  none'}`;
+  return `### ${a.name}\n${a.description}\n参数:\n${params || '  无'}`;
 }).join('\n\n')}
 
-## Instructions
-1. Analyze your current situation based on your role and state
-2. Decide what to do next
+## 指令
+1. 基于你的角色和当前状态分析情况
+2. 决定下一步做什么
 3. 请用中文思考和回复。
-4. Respond ONLY with valid JSON in this format:
-{"thinking": "...", "actions": [{"name": "actionName", "parameters": {}}]}
-5. All actions you return will run simultaneously in parallel.
-6. Be proactive — do what your role suggests
-7. Stay safe (avoid lava, cliffs, hostile mobs)
-8. Check [Action] history — if you already did something, don't repeat it
-9. When done or nothing to do, use **finish** to reply and wait.
-10. If the player is just chatting (not asking for a task), use **chat** then **finish**.${CHEAT ? `
-11. Only use **command** when the player asks for cheats. Prefer normal actions.` : ''}`;
+4. 只输出有效JSON，格式如下：
+{"thinking": "...", "actions": [{"name": "动作名称", "parameters": {}}]}
+5. 所有返回的动作将同时并行执行。
+6. 主动行动 — 根据你的角色做该做的事
+7. 注意安全（避开熔岩、悬崖、敌对生物）
+8. 检查[结果]历史 — 已经做过的事不要重复做
+9. 完成或无任务时，使用 **finish** 回复并等待。
+10. 如果玩家只是聊天（不是下达任务），使用 **chat** 后接 **finish**。${CHEAT ? `
+11. 只有在玩家要求作弊时才使用 **command**。优先使用普通动作。` : ''}`;
     }
 
     const messages = [
@@ -552,7 +559,7 @@ ${ACTION_DEFINITIONS.map(a => {
       decision = JSON.parse(content);
     } catch (e) {
       console.error(`[LLM] 解析响应失败: ${content}`);
-      conversationHistory.push({ role: 'user', content: `你刚才输出的JSON格式有误（原始输出: ${content.slice(0, 200)}），无法解析。请只输出纯JSON，不要包含任何其他文字或代码块标记。格式: {"thinking": "...", "actions": [...]}` });
+      conversationHistory.push({ role: 'system', content: `你刚才输出的JSON格式有误（原始输出: ${content.slice(0, 200)}），无法解析。请只输出纯JSON，不要包含任何其他文字或代码块标记。格式: {"thinking": "...", "actions": [...]}` });
       if (conversationHistory.length > 50) conversationHistory.splice(0, 10);
       isProcessing = false;
       return;
@@ -567,7 +574,7 @@ ${ACTION_DEFINITIONS.map(a => {
       const results = await Promise.all(nonFinishActions.map(async (action) => {
         const result = await executeAction(action);
         console.log(`[动作] ${action.name}: ${result}`);
-        conversationHistory.push({ role: 'assistant', content: `[Action] ${action.name}: ${result}` });
+        conversationHistory.push({ role: 'system', content: `[结果] ${action.name}: ${result}` });
         if (conversationHistory.length > 50) conversationHistory.splice(0, 10);
         return { name: action.name, result };
       }));
