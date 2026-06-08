@@ -148,6 +148,7 @@ function createBot() {
       waitingForPlayer = false;
       console.log('[BOT] 玩家发言，继续运行...');
     }
+    setImmediate(thinkAndAct);
   });
 
   bot.on('health', () => {
@@ -213,6 +214,16 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function withTimeout(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`操作超时 (${ms}ms)`)), ms);
+    }),
+  ]);
+}
+
 async function executeAction(action) {
   const { name, parameters } = action;
 
@@ -259,12 +270,18 @@ async function executeAction(action) {
         const item = bot.inventory.items().find(i => i.name === parameters.blockName);
         if (!item) return `背包里没有 ${parameters.blockName}`;
         await bot.equip(item, 'hand');
-        const targetBlock = bot.blockAt(new Vec3(parameters.x, parameters.y, parameters.z));
-        if (!targetBlock || targetBlock.name === 'air') {
-          await bot.placeBlock(targetBlock || new Vec3(parameters.x, parameters.y, parameters.z));
-          return `放置了 ${parameters.blockName}`;
-        }
-        return `目标位置已有方块`;
+        const targetPos = new Vec3(parameters.x, parameters.y, parameters.z);
+        const targetBlock = bot.blockAt(targetPos);
+        if (!targetBlock) return `目标位置超出世界范围或未加载`;
+        if (targetBlock.name !== 'air') return `目标位置已有方块: ${targetBlock.name}`;
+        const refBlock = bot.blockAt(targetPos.offset(0, -1, 0))
+          || bot.blockAt(targetPos.offset(0, 0, -1))
+          || bot.blockAt(targetPos.offset(1, 0, 0))
+          || bot.blockAt(targetPos.offset(-1, 0, 0))
+          || bot.blockAt(targetPos.offset(0, 0, 1));
+        if (!refBlock || refBlock.name === 'air') return `目标位置附近没有可放置的参考方块`;
+        await bot.placeBlock(refBlock);
+        return `放置了 ${parameters.blockName}`;
       }
       case 'equip': {
         const eqItem = bot.inventory.items().find(i => i.name === parameters.itemName)
@@ -290,8 +307,8 @@ async function executeAction(action) {
         for (const item of items) {
           try {
             const itemGoal = new (require('mineflayer-pathfinder').goals.GoalNear)(item.position.x, item.position.y, item.position.z, 1);
-            await bot.pathfinder.goto(itemGoal);
-            await bot.collect(item);
+            await withTimeout(bot.pathfinder.goto(itemGoal), 10000);
+            await withTimeout(bot.collect(item), 5000);
             count++;
           } catch (e) { }
         }
@@ -402,10 +419,9 @@ async function executeAction(action) {
         const seedItem = bot.inventory.items().find(i => i.name === parameters.seedName);
         if (seedItem) {
           await bot.equip(seedItem, 'hand');
-          const above = new Vec3(parameters.x, parameters.y + 1, parameters.z);
-          const aboveBlock = bot.blockAt(above);
-          if (aboveBlock && aboveBlock.name === 'air') {
-            await bot.placeBlock(above);
+          const above = bot.blockAt(new Vec3(parameters.x, parameters.y + 1, parameters.z));
+          if (above && above.name === 'air') {
+            await bot.activateBlock(soilBlock);
           }
         }
         return `在 (${parameters.x}, ${parameters.y}, ${parameters.z}) 耕种`;
@@ -426,8 +442,8 @@ async function executeAction(action) {
         const rod = bot.inventory.items().find(i => i.name.includes('fishing_rod'));
         if (!rod) return '没有钓鱼竿';
         await bot.equip(rod, 'hand');
-        await bot.fish();
-        return '正在钓鱼';
+        await withTimeout(bot.fish(), 30000);
+        return '钓到了鱼';
       }
       case 'trade': {
         const villager = Object.values(bot.entities).find(e => e.name === 'villager' && e.position && bot.entity.position.distanceTo(e.position) < 6);
