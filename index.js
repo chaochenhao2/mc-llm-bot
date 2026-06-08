@@ -18,7 +18,7 @@ const CONTINUOUS = process.env.CONTINUOUS === 'true';
 const CHEAT = process.env.CHEAT === 'true';
 
 if (!API_KEY) {
-  console.error('Error: API_KEY environment variable is required');
+  console.error('错误: 环境变量 API_KEY 是必需的');
   process.exit(1);
 }
 
@@ -257,26 +257,26 @@ function createBot() {
   bot.loadPlugin(pathfinder.pathfinder);
 
   bot.on('login', () => {
-    console.log(`[BOT] Logged in as ${bot.username}`);
-    console.log(`[BOT] Connected to ${MC_HOST}:${MC_PORT}`);
+    console.log(`[BOT] 已登录为 ${bot.username}`);
+    console.log(`[BOT] 已连接到 ${MC_HOST}:${MC_PORT}`);
     startDecisionLoop();
   });
 
   bot.on('spawn', () => {
-    console.log(`[BOT] Spawned at ${bot.entity.position}`);
+    console.log(`[BOT] 出生在 ${bot.entity.position}`);
   });
 
   bot.on('death', () => {
-    console.log('[BOT] Died! Respawning...');
+    console.log('[BOT] 死亡！正在重生...');
     currentTask = 'Respawning after death';
   });
 
   bot.on('kicked', (reason) => {
-    console.log(`[BOT] Kicked: ${reason}`);
+    console.log(`[BOT] 被踢出: ${reason}`);
   });
 
   bot.on('error', (err) => {
-    console.error(`[BOT] Error: ${err.message}`);
+    console.error(`[BOT] 错误: ${err.message}`);
   });
 
   bot.on('chat', (username, message) => {
@@ -288,7 +288,7 @@ function createBot() {
     if (conversationHistory.length > 50) conversationHistory.splice(0, 10);
     if (waitingForPlayer) {
       waitingForPlayer = false;
-      console.log('[BOT] Player spoke, resuming...');
+      console.log('[BOT] 玩家发言，继续运行...');
     }
   });
 
@@ -476,9 +476,14 @@ async function executeAction(action) {
         return `Dropped ${dropItem.count} x ${parameters.itemName}`;
       }
       case 'consume': {
-        const food = bot.inventory.items().find(i => i.foodPoints);
+        const isFood = (item) => bot.registry.foodsArray.some(f => f.id === item.type);
+        const food = (bot.heldItem && isFood(bot.heldItem))
+          ? bot.heldItem
+          : bot.inventory.items().find(isFood);
         if (!food) return 'No food in inventory';
-        await bot.equip(food, 'hand');
+        if (!bot.heldItem || bot.heldItem.type !== food.type) {
+          await bot.equip(food, 'hand');
+        }
         await bot.consume();
         return `Ate ${food.name}`;
       }
@@ -601,7 +606,7 @@ async function executeAction(action) {
 async function thinkAndAct() {
   if (isProcessing || (waitingForPlayer && !CONTINUOUS)) return;
   isProcessing = true;
-  console.log('[LOOP] Decision cycle started');
+      console.log('[LOOP] 决策循环开始');
 
   try {
     const state = getState();
@@ -632,12 +637,13 @@ ${JSON.stringify(state, null, 2)}
 3. 请用中文思考和回复。
 4. You must respond with valid JSON ONLY, no markdown formatting or code blocks. Use this exact format:
 {"thinking": "Brief reasoning about what to do and why", "actions": [{"name": "actionName", "parameters": {"key": "value"}}]}
-5. You can chain multiple actions in one response
+5. You can output multiple actions in one response — all of them will be executed simultaneously in parallel. Use this to combine independent actions.
 6. Be proactive - if your role suggests doing something, do it
 7. Keep actions simple and safe (avoid lava, cliffs, etc.)
 8. Check this history for **[Action]** records - if you have already fulfilled a request, do NOT repeat it. Always check your current inventory to see if the action actually happened.
-9. When you have completed the user's request or have nothing to do, use the **finish** action to reply to the player and stop the loop. Do NOT use finish if you still need to take more actions.${CHEAT ? `
-10. Only use the **command** action when the player asks for cheats or it's absolutely necessary. Prefer normal actions whenever possible.`.trim() : ''}`,
+9. When you have completed the user's request or have nothing to do, use the **finish** action to reply to the player and stop the loop. Do NOT use finish if you still need to take more actions.
+10. If the player is just chatting or greeting you (not asking you to do anything), use the **chat** action to respond politely, then **finish** to wait for further instructions.${CHEAT ? `
+11. Only use the **command** action when the player asks for cheats or it's absolutely necessary. Prefer normal actions whenever possible.`.trim() : ''}`,
     };
 
     const messages = [systemMessage, ...conversationHistory.slice(-10)];
@@ -646,11 +652,11 @@ ${JSON.stringify(state, null, 2)}
       model: API_MODEL,
       messages: messages,
       temperature: 0.7,
-      max_tokens: 500,
+      max_tokens: 1600,
     });
 
     if (!response.choices || response.choices.length === 0) {
-      console.error('[LLM] API returned no choices. Full response:', JSON.stringify(response).slice(0, 500));
+      console.error('[LLM] API 没有返回任何 choices。完整响应:', JSON.stringify(response).slice(0, 500));
       isProcessing = false;
       return;
     }
@@ -664,31 +670,41 @@ ${JSON.stringify(state, null, 2)}
     try {
       decision = JSON.parse(content);
     } catch (e) {
-      console.error(`[LLM] Failed to parse response: ${content}`);
+      console.error(`[LLM] 解析响应失败: ${content}`);
+      conversationHistory.push({ role: 'user', content: `你刚才输出的JSON格式有误（原始输出: ${content.slice(0, 200)}），无法解析。请只输出纯JSON，不要包含任何其他文字或代码块标记。格式: {"thinking": "...", "actions": [...]}` });
+      if (conversationHistory.length > 50) conversationHistory.splice(0, 10);
       isProcessing = false;
       return;
     }
 
-    console.log(`[LLM] ${decision?.thinking || 'No reasoning provided'}`);
+    console.log(`[LLM] ${decision?.thinking || '未提供推理过程'}`);
 
     if (decision.actions && Array.isArray(decision.actions)) {
-      for (const action of decision.actions) {
+      const hasFinish = decision.actions.some(a => a.name === 'finish');
+      const nonFinishActions = decision.actions.filter(a => a.name !== 'finish');
+
+      const results = await Promise.all(nonFinishActions.map(async (action) => {
         const result = await executeAction(action);
-        console.log(`[ACTION] ${action.name}: ${result}`);
+        console.log(`[动作] ${action.name}: ${result}`);
         conversationHistory.push({ role: 'assistant', content: `[Action] ${action.name}: ${result}` });
         if (conversationHistory.length > 50) conversationHistory.splice(0, 10);
-        await sleep(500);
-        if (action.name === 'finish' && !CONTINUOUS) {
+        return { name: action.name, result };
+      }));
+
+      if (hasFinish) {
+        const finishAction = decision.actions.find(a => a.name === 'finish');
+        await executeAction(finishAction);
+        if (!CONTINUOUS) {
           waitingForPlayer = true;
           isProcessing = false;
-          console.log('[BOT] Waiting for player input...');
+          console.log('[BOT] 等待玩家输入...');
           return;
         }
       }
     }
   } catch (err) {
-    console.error(`[LLM] Error: ${err.message || err}`);
-    console.error(`[LLM] Error stack: ${err.stack?.slice(0, 200)}`);
+    console.error(`[LLM] 错误: ${err.message || err}`);
+    console.error(`[LLM] 错误堆栈: ${err.stack?.slice(0, 200)}`);
   }
 
   isProcessing = false;
@@ -698,8 +714,8 @@ function startDecisionLoop() {
   const start = () => {
     bot.chat('LLM Bot online and ready!');
     decisionInterval = setInterval(thinkAndAct, DECISION_INTERVAL);
-    console.log(`[BOT] Decision loop started (continuous: ${CONTINUOUS})`);
-    if (!CONTINUOUS) console.log('[BOT] Use finish() to wait for player input');
+    console.log(`[BOT] 决策循环已启动 (continuous: ${CONTINUOUS})`);
+    if (!CONTINUOUS) console.log('[BOT] 使用 finish() 来等待玩家输入');
   };
 
   if (bot.entity) {
@@ -709,21 +725,21 @@ function startDecisionLoop() {
   }
 }
 
-console.log('=== LLM Minecraft Bot ===');
-console.log(`API URL: ${API_URL}`);
-console.log(`Model: ${API_MODEL}`);
-console.log(`Server: ${MC_HOST}:${MC_PORT}`);
-console.log(`Bot: ${BOT_NAME}`);
-console.log(`Role: ${BOT_ROLE}`);
-console.log(`Decision interval: ${DECISION_INTERVAL}ms`);
-console.log(`Cheat mode: ${CHEAT ? 'ON (command action available)' : 'OFF'}`);
-console.log(`Continuous mode: ${CONTINUOUS ? 'ON (always active)' : 'OFF (use finish to wait)'}`);
+console.log('=== LLM Minecraft 机器人 ===');
+console.log(`API 地址: ${API_URL}`);
+console.log(`模型: ${API_MODEL}`);
+console.log(`服务器: ${MC_HOST}:${MC_PORT}`);
+console.log(`机器人: ${BOT_NAME}`);
+console.log(`角色: ${BOT_ROLE}`);
+console.log(`决策间隔: ${DECISION_INTERVAL}ms`);
+console.log(`作弊模式: ${CHEAT ? '开（可使用命令动作）' : '关'}`);
+console.log(`连续模式: ${CONTINUOUS ? '开（始终运行）' : '关（使用 finish 等待输入）'}`);
 console.log('');
 
 createBot();
 
 process.on('SIGINT', () => {
-  console.log('\nShutting down...');
+  console.log('\n正在关闭...');
   bot?.quit();
   process.exit(0);
 });
