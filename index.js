@@ -3,6 +3,7 @@ const pathfinder = require('mineflayer-pathfinder');
 const { GoalFollow, GoalNear } = pathfinder.goals;
 const OpenAI = require('openai');
 const { Vec3 } = require('vec3');
+const net = require('net');
 
 let API_URL = process.env.API_URL || 'https://api.openai.com/v1';
 API_URL = API_URL.replace(/\/+$/, '');
@@ -230,6 +231,34 @@ function withTimeout(promise, ms) {
       timer = setTimeout(() => reject(new Error(`操作超时 (${ms}ms)`)), ms);
     }),
   ]);
+}
+
+function checkServer(host, port) {
+  return new Promise((resolve, reject) => {
+    const sock = new net.Socket();
+    sock.setTimeout(3000);
+    sock.on('connect', () => { sock.destroy(); resolve(); });
+    sock.on('error', (e) => { sock.destroy(); reject(e); });
+    sock.on('timeout', () => { sock.destroy(); reject(new Error('连接超时')); });
+    sock.connect(port, host);
+  });
+}
+
+async function waitForServer() {
+  for (let i = 1; i <= 10; i++) {
+    try {
+      await checkServer(MC_HOST, MC_PORT);
+      console.log(`[BOT] 服务器 ${MC_HOST}:${MC_PORT} 已就绪`);
+      return;
+    } catch (e) {
+      console.log(`[BOT] 等待服务器 ${MC_HOST}:${MC_PORT}... (${i}/10)`);
+      if (i === 10) {
+        console.error(`[BOT] 服务器 ${MC_HOST}:${MC_PORT} 无法连接，已退出`);
+        process.exit(1);
+      }
+      await sleep(5000);
+    }
+  }
 }
 
 async function executeAction(action) {
@@ -626,7 +655,10 @@ console.log(`作弊模式: ${CHEAT ? '开（可使用命令动作）' : '关'}`)
 console.log(`连续模式: ${CONTINUOUS ? '开（始终运行）' : '关（使用 finish 等待输入）'}`);
 console.log('');
 
-createBot();
+(async () => {
+  await waitForServer();
+  createBot();
+})();
 
 process.on('SIGINT', () => {
   console.log('\n正在关闭...');
