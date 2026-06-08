@@ -38,6 +38,11 @@ let prevStateSignature = '';
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 
+function botChat(msg) {
+  const now = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  bot.chat(`[${now}] [${BOT_NAME}] ${msg}`);
+}
+
 const ACTION_DEFINITIONS = [
   { name: 'moveTo', description: 'Move to x,y,z', parameters: { x: { type: 'number', description: 'X' }, y: { type: 'number', description: 'Y' }, z: { type: 'number', description: 'Z' } } },
   { name: 'follow', description: 'Follow a player', parameters: { username: { type: 'string', description: 'Player name' } } },
@@ -146,8 +151,8 @@ function createBot() {
   });
 
   bot.on('health', () => {
-    if (bot.health <= 4) {
-      bot.chat('我需要治疗！');
+    if (bot.health <= 4 && Object.keys(bot.players).length > 1) {
+      botChat('我需要治疗！');
     }
   });
 }
@@ -239,7 +244,7 @@ async function executeAction(action) {
         return `看向 (${parameters.x}, ${parameters.y}, ${parameters.z})`;
       }
       case 'chat': {
-        bot.chat(parameters.message);
+        botChat(parameters.message);
         return `说话: ${parameters.message}`;
       }
       case 'mineBlock': {
@@ -437,7 +442,7 @@ async function executeAction(action) {
         return `交易了 ${parameters.count || 1} 次`;
       }
       case 'finish': {
-        bot.chat(parameters.message);
+        botChat(parameters.message);
         conversationHistory.push({ role: 'assistant', content: parameters.message });
         if (conversationHistory.length > 50) conversationHistory.splice(0, 10);
         return `完成: ${parameters.message}`;
@@ -572,9 +577,9 @@ ${ACTION_DEFINITIONS.map(a => {
 
 function startDecisionLoop() {
   const start = () => {
-    bot.chat(`§a=== LLM机器人已上线 ===`);
-    bot.chat(`§e角色: ${BOT_ROLE.replace(/。.*/, '。')}`);
-    bot.chat(`§b输入聊天与我对话，让我帮你做事！`);
+    botChat(`§a=== LLM机器人已上线 ===`);
+    botChat(`§e角色: ${BOT_ROLE.replace(/。.*/, '。')}`);
+    botChat(`§b输入聊天与我对话，让我帮你做事！`);
     decisionInterval = setInterval(thinkAndAct, DECISION_INTERVAL);
     console.log(`[BOT] 决策循环已启动 (continuous: ${CONTINUOUS})`);
     if (!CONTINUOUS) console.log('[BOT] 使用 finish() 来等待玩家输入');
