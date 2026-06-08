@@ -20,7 +20,7 @@
 ## 安装
 
 ```bash
-cd /root/mc-llm-bot
+cd mc-llm-bot
 npm install
 ```
 
