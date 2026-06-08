@@ -28,7 +28,6 @@ const openai = new OpenAI({
 });
 
 let bot;
-let actionQueue = [];
 let isProcessing = false;
 let waitingForPlayer = false;
 let decisionInterval = null;
@@ -165,10 +164,10 @@ function getState() {
   const food = bot.food || 20;
   const dimension = bot.game.dimension || 'unknown';
 
-  const inventory = bot.inventory ? bot.inventory.items().map(i => ({
-    name: i.name,
-    count: i.count,
-  })) : [];
+  const inventory = bot.inventory ? bot.inventory.items().reduce((acc, i) => {
+    acc[i.name] = (acc[i.name] || 0) + i.count;
+    return acc;
+  }, {}) : {};
 
   const nearbyEntities = Object.values(bot.entities || {})
     .filter(e => e.type !== 'player' || e.username !== bot.username)
@@ -176,16 +175,14 @@ function getState() {
     .map(e => ({
       name: e.name || e.username || e.type,
       type: e.type,
-      distance: Math.round(entity.position.distanceTo(e.position)),
-      position: e.position ? { x: Math.round(e.position.x), y: Math.round(e.position.y), z: Math.round(e.position.z) } : null,
-    }));
+      dist: Math.round(entity.position.distanceTo(e.position)),
+    }))
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, 5);
 
   const nearbyPlayers = Object.values(bot.players || {})
     .filter(p => p.username !== bot.username)
-    .map(p => ({
-      username: p.username,
-      ping: p.ping,
-    }));
+    .map(p => p.username);
 
   const time = bot.time ? bot.time.timeOfDay : 'unknown';
   const rainState = bot.isRaining ? 'raining' : 'clear';
@@ -222,65 +219,65 @@ async function executeAction(action) {
         const target = new Vec3(parameters.x, parameters.y, parameters.z);
         const goal = new (require('mineflayer-pathfinder').goals.GoalNear)(target.x, target.y, target.z, 1);
         await bot.pathfinder.goto(goal);
-        return `Moved to (${parameters.x}, ${parameters.y}, ${parameters.z})`;
+        return `移动到 (${parameters.x}, ${parameters.y}, ${parameters.z})`;
       }
       case 'follow': {
         const targetPlayer = bot.players[parameters.username];
         if (!targetPlayer || !targetPlayer.entity) {
-          return `Cannot find player ${parameters.username}`;
+          return `找不到玩家 ${parameters.username}`;
         }
         const goal = new GoalFollow(targetPlayer.entity, 2);
         bot.pathfinder.setGoal(goal, true);
         bot._followTarget = parameters.username;
-        return `Following ${parameters.username}`;
+        return `正在跟随 ${parameters.username}`;
       }
       case 'stopFollowing': {
         bot.pathfinder.stop();
         bot._followTarget = null;
-        return 'Stopped following';
+        return '已停止跟随';
       }
       case 'lookAt': {
         await bot.lookAt(new Vec3(parameters.x, parameters.y, parameters.z));
-        return `Looked at (${parameters.x}, ${parameters.y}, ${parameters.z})`;
+        return `看向 (${parameters.x}, ${parameters.y}, ${parameters.z})`;
       }
       case 'chat': {
         bot.chat(parameters.message);
-        return `Said: ${parameters.message}`;
+        return `说话: ${parameters.message}`;
       }
       case 'mineBlock': {
         const block = bot.blockAt(new Vec3(parameters.x, parameters.y, parameters.z));
         if (block && block.name !== 'air') {
           await bot.dig(block);
-          return `Mined ${block.name} at (${parameters.x}, ${parameters.y}, ${parameters.z})`;
+          return `挖掘了 ${block.name} 在 (${parameters.x}, ${parameters.y}, ${parameters.z})`;
         }
-        return `No minable block at (${parameters.x}, ${parameters.y}, ${parameters.z})`;
+        return `在 (${parameters.x}, ${parameters.y}, ${parameters.z}) 没有可挖掘的方块`;
       }
       case 'placeBlock': {
         const item = bot.inventory.items().find(i => i.name === parameters.blockName);
-        if (!item) return `No ${parameters.blockName} in inventory`;
+        if (!item) return `背包里没有 ${parameters.blockName}`;
         await bot.equip(item, 'hand');
         const targetBlock = bot.blockAt(new Vec3(parameters.x, parameters.y, parameters.z));
         if (!targetBlock || targetBlock.name === 'air') {
           await bot.placeBlock(targetBlock || new Vec3(parameters.x, parameters.y, parameters.z));
-          return `Placed ${parameters.blockName}`;
+          return `放置了 ${parameters.blockName}`;
         }
-        return `Block already exists at target location`;
+        return `目标位置已有方块`;
       }
       case 'equip': {
         const eqItem = bot.inventory.items().find(i => i.name === parameters.itemName)
           || bot.inventory.items().find(i => i.name.includes(parameters.itemName));
-        if (!eqItem) return `No ${parameters.itemName} in inventory`;
+        if (!eqItem) return `背包里没有 ${parameters.itemName}`;
         await bot.equip(eqItem, 'hand');
-        return `Equipped ${eqItem.name}`;
+        return `装备了 ${eqItem.name}`;
       }
       case 'attack': {
         const target = Object.values(bot.entities)
           .find(e => (e.name === parameters.entityType || e.type === parameters.entityType) && e.position && bot.entity.position.distanceTo(e.position) < 8);
         if (target) {
           await bot.attack(target);
-          return `Attacked ${parameters.entityType}`;
+          return `攻击了 ${parameters.entityType}`;
         }
-        return `No ${parameters.entityType} nearby`;
+        return `附近没有 ${parameters.entityType}`;
       }
       case 'collectNearby': {
         const range = parameters.range || 16;
@@ -295,7 +292,7 @@ async function executeAction(action) {
             count++;
           } catch (e) { }
         }
-        return `Collected ${count} items`;
+        return `捡起了 ${count} 个物品`;
       }
       case 'goToPlayer': {
         const { GoalNear } = require('mineflayer-pathfinder').goals;
@@ -304,17 +301,17 @@ async function executeAction(action) {
         const pos = entity?.position || bot.players[parameters.username]?.entity?.position;
         if (pos) {
           await bot.pathfinder.goto(new GoalNear(pos.x, pos.y, pos.z, 1));
-          return `Navigated to ${parameters.username}`;
+          return `已移动到玩家 ${parameters.username} 身边`;
         }
-        return `Cannot find player ${parameters.username}`;
+        return `找不到玩家 ${parameters.username}`;
       }
       case 'setTask': {
         currentTask = parameters.task;
-        return `Task set to: ${parameters.task}`;
+        return `任务已设为: ${parameters.task}`;
       }
       case 'wait': {
         await sleep(parameters.seconds * 1000);
-        return `Waited ${parameters.seconds} seconds`;
+        return `等待了 ${parameters.seconds} 秒`;
       }
       case 'dropItem': {
         if (parameters.itemName === 'all') {
@@ -323,74 +320,74 @@ async function executeAction(action) {
             await bot.tossStack(item);
             count += item.count;
           }
-          return `Dropped ${count} items`;
+          return `丢出了 ${count} 个物品`;
         }
         const dropItem = bot.inventory.items().find(i => i.name === parameters.itemName)
           || bot.inventory.items().find(i => i.name.includes(parameters.itemName));
-        if (!dropItem) return `No ${parameters.itemName} in inventory to drop`;
+        if (!dropItem) return `背包里没有 ${parameters.itemName} 可以丢弃`;
         await bot.toss(dropItem.type, null, dropItem.count);
-        return `Dropped ${dropItem.count} x ${dropItem.name}`;
+        return `丢出了 ${dropItem.count} 个 ${dropItem.name}`;
       }
       case 'consume': {
         const isFood = (item) => bot.registry.foodsArray.some(f => f.id === item.type);
         const food = (bot.heldItem && isFood(bot.heldItem))
           ? bot.heldItem
           : bot.inventory.items().find(isFood);
-        if (!food) return 'No food in inventory';
+        if (!food) return '背包里没有食物';
         if (!bot.heldItem || bot.heldItem.type !== food.type) {
           await bot.equip(food, 'hand');
         }
         await bot.consume();
-        return `Ate ${food.name}`;
+        return `吃了 ${food.name}`;
       }
       case 'sleep': {
         const bed = bot.findBlock({ matching: block => block.name.includes('bed'), maxDistance: 6 });
-        if (!bed) return 'No bed nearby';
+        if (!bed) return '附近没有床';
         await bot.sleep(bed);
-        return 'Sleeping';
+        return '正在睡觉';
       }
       case 'activateBlock': {
         const block = bot.blockAt(new Vec3(parameters.x, parameters.y, parameters.z));
-        if (!block) return 'No block at position';
+        if (!block) return '该位置没有方块';
         await bot.activateBlock(block);
-        return `Activated ${block.name}`;
+        return `激活了 ${block.name}`;
       }
       case 'openContainer': {
         const containerBlock = bot.blockAt(new Vec3(parameters.x, parameters.y, parameters.z));
-        if (!containerBlock) return 'No block at position';
+        if (!containerBlock) return '该位置没有方块';
         const container = await bot.openContainer(containerBlock);
         bot._currentContainer = container;
-        return `Opened ${containerBlock.name}`;
+        return `打开了 ${containerBlock.name}`;
       }
       case 'closeContainer': {
-        if (!bot._currentContainer) return 'No container open';
+        if (!bot._currentContainer) return '没有打开的容器';
         await bot._currentContainer.close();
         bot._currentContainer = null;
-        return 'Closed container';
+        return '已关闭容器';
       }
       case 'withdraw': {
-        if (!bot._currentContainer) return 'No container open';
+        if (!bot._currentContainer) return '没有打开的容器';
         const slot = bot._currentContainer.slots[parameters.slot];
-        if (!slot) return `No item in slot ${parameters.slot}`;
+        if (!slot) return `槽位 ${parameters.slot} 没有物品`;
         await bot._currentContainer.withdraw(slot.type, null, parameters.count);
-        return `Withdrew ${parameters.count} x ${slot.name}`;
+        return `取出了 ${parameters.count} 个 ${slot.name}`;
       }
       case 'deposit': {
-        if (!bot._currentContainer) return 'No container open';
+        if (!bot._currentContainer) return '没有打开的容器';
         const depositItem = bot.inventory.items().find(i => i.name === parameters.itemName);
-        if (!depositItem) return `No ${parameters.itemName} in inventory`;
+        if (!depositItem) return `背包里没有 ${parameters.itemName}`;
         await bot._currentContainer.deposit(depositItem.type, null, parameters.count);
-        return `Deposited ${parameters.count} x ${parameters.itemName}`;
+        return `存入了 ${parameters.count} 个 ${parameters.itemName}`;
       }
       case 'craft': {
         const craftingTable = bot.findBlock({ matching: block => block.name === 'crafting_table', maxDistance: 6 });
-        if (!craftingTable) return 'No crafting table nearby';
+        if (!craftingTable) return '附近没有工作台';
         const itemType = bot.registry.itemsByName[parameters.itemName]?.id;
-        if (!itemType) return `Unknown item: ${parameters.itemName}`;
+        if (!itemType) return `未知物品: ${parameters.itemName}`;
         const recipes = bot.recipesFor(itemType, null, 1, true);
-        if (!recipes || recipes.length === 0) return `No recipe for ${parameters.itemName}`;
+        if (!recipes || recipes.length === 0) return `没有 ${parameters.itemName} 的合成配方`;
         await bot.craft(recipes[0], parameters.count || 1, craftingTable);
-        return `Crafted ${parameters.count || 1} x ${parameters.itemName}`;
+        return `合成了 ${parameters.count || 1} 个 ${parameters.itemName}`;
       }
       case 'farm': {
         const hoe = bot.inventory.items().find(i => i.name.includes('hoe'));
@@ -408,54 +405,54 @@ async function executeAction(action) {
             await bot.placeBlock(above);
           }
         }
-        return `Farmed at (${parameters.x}, ${parameters.y}, ${parameters.z})`;
+        return `在 (${parameters.x}, ${parameters.y}, ${parameters.z}) 耕种`;
       }
       case 'breedAnimals': {
         const animal = Object.values(bot.entities)
           .find(e => e.name === parameters.animalType && e.position && bot.entity.position.distanceTo(e.position) < 8);
-        if (!animal) return `No ${parameters.animalType} nearby`;
+        if (!animal) return `附近没有 ${parameters.animalType}`;
         const foodItem = bot.inventory.items().find(i => i.name.includes('wheat') || i.name.includes('seed'));
         if (foodItem) {
           await bot.equip(foodItem, 'hand');
           await bot.activateEntity(animal);
-          return `Bred ${parameters.animalType}`;
+          return `繁殖了 ${parameters.animalType}`;
         }
-        return `No breeding food for ${parameters.animalType}`;
+        return `没有用于繁殖 ${parameters.animalType} 的食物`;
       }
       case 'fish': {
         const rod = bot.inventory.items().find(i => i.name.includes('fishing_rod'));
-        if (!rod) return 'No fishing rod';
+        if (!rod) return '没有钓鱼竿';
         await bot.equip(rod, 'hand');
         await bot.fish();
-        return 'Fishing';
+        return '正在钓鱼';
       }
       case 'trade': {
         const villager = Object.values(bot.entities).find(e => e.name === 'villager' && e.position && bot.entity.position.distanceTo(e.position) < 6);
-        if (!villager) return 'No villager nearby';
+        if (!villager) return '附近没有村民';
         const tradeWindow = await bot.openVillager(villager);
         const offer = tradeWindow.trades[parameters.tradeIndex];
-        if (!offer) return `No trade at index ${parameters.tradeIndex}`;
+        if (!offer) return `没有交易索引 ${parameters.tradeIndex}`;
         for (let i = 0; i < (parameters.count || 1); i++) {
           await tradeWindow.trade(parameters.tradeIndex);
         }
         await tradeWindow.close();
-        return `Traded ${parameters.count || 1} times`;
+        return `交易了 ${parameters.count || 1} 次`;
       }
       case 'finish': {
         bot.chat(parameters.message);
         conversationHistory.push({ role: 'assistant', content: parameters.message });
         if (conversationHistory.length > 50) conversationHistory.splice(0, 10);
-        return `Finished: ${parameters.message}`;
+        return `完成: ${parameters.message}`;
       }
       case 'command': {
         bot.chat('/' + parameters.command.replace(/^\//, ''));
-        return `Executed command: ${parameters.command}`;
+        return `执行命令: ${parameters.command}`;
       }
       default:
-        return `Unknown action: ${name}`;
+        return `未知动作: ${name}`;
     }
   } catch (err) {
-    return `Action ${name} failed: ${err.message}`;
+    return `动作 ${name} 失败: ${err.message}`;
   }
 }
 
@@ -473,7 +470,7 @@ async function thinkAndAct() {
 
     // 跳过无变化的轮询
     const sig = JSON.stringify({ h: state.health, f: state.food, p: state.position, t: state.currentTask, l: conversationHistory.length });
-    if (sig === prevStateSignature && !state.entities.some(e => e.type === 'hostile')) {
+    if (sig === prevStateSignature) {
       isProcessing = false;
       return;
     }
@@ -508,7 +505,7 @@ ${ACTION_DEFINITIONS.map(a => {
 
     const messages = [
       { role: 'system', content: cachedSystemContent },
-      { role: 'system', content: `## Current State\n${JSON.stringify(state, null, 2)}` },
+      { role: 'system', content: `## State\n${JSON.stringify(state)}` },
       ...conversationHistory.slice(-10),
     ];
 
@@ -577,7 +574,9 @@ ${ACTION_DEFINITIONS.map(a => {
 
 function startDecisionLoop() {
   const start = () => {
-    bot.chat('LLM 机器人已上线！');
+    bot.chat(`§a=== LLM机器人已上线 ===`);
+    bot.chat(`§e角色: ${BOT_ROLE.replace(/。.*/, '。')}`);
+    bot.chat(`§b输入聊天与我对话，让我帮你做事！`);
     decisionInterval = setInterval(thinkAndAct, DECISION_INTERVAL);
     console.log(`[BOT] 决策循环已启动 (continuous: ${CONTINUOUS})`);
     if (!CONTINUOUS) console.log('[BOT] 使用 finish() 来等待玩家输入');
