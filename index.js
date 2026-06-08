@@ -35,6 +35,9 @@ let decisionInterval = null;
 let currentTask = '';
 let conversationHistory = [];
 let cachedSystemContent = '';
+let prevStateSignature = '';
+let reconnectTimer = null;
+let reconnectAttempts = 0;
 
 const ACTION_DEFINITIONS = [
   { name: 'moveTo', description: 'Move to x,y,z', parameters: { x: { type: 'number', description: 'X' }, y: { type: 'number', description: 'Y' }, z: { type: 'number', description: 'Z' } } },
@@ -76,6 +79,18 @@ if (CHEAT) {
   });
 }
 
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  if (decisionInterval) { clearInterval(decisionInterval); decisionInterval = null; }
+  reconnectAttempts++;
+  const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000);
+  console.log(`[BOT] ${delay / 1000}秒后尝试重连 (第${reconnectAttempts}次)...`);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    createBot();
+  }, delay);
+}
+
 function createBot() {
   bot = mineflayer.createBot({
     host: MC_HOST,
@@ -88,6 +103,7 @@ function createBot() {
   bot.on('login', () => {
     console.log(`[BOT] 已登录为 ${bot.username}`);
     console.log(`[BOT] 已连接到 ${MC_HOST}:${MC_PORT}`);
+    reconnectAttempts = 0;
     startDecisionLoop();
   });
 
@@ -102,10 +118,19 @@ function createBot() {
 
   bot.on('kicked', (reason) => {
     console.log(`[BOT] 被踢出: ${reason}`);
+    scheduleReconnect();
   });
 
   bot.on('error', (err) => {
     console.error(`[BOT] 错误: ${err.message}`);
+    if (err.message.includes('connect') || err.message.includes('ECONNREFUSED') || err.message.includes('timeout')) {
+      scheduleReconnect();
+    }
+  });
+
+  bot.on('end', () => {
+    console.log('[BOT] 连接已断开');
+    scheduleReconnect();
   });
 
   bot.on('chat', (username, message) => {
@@ -123,7 +148,7 @@ function createBot() {
 
   bot.on('health', () => {
     if (bot.health <= 4) {
-      bot.chat('I need healing!');
+      bot.chat('我需要治疗！');
     }
   });
 }
@@ -242,10 +267,11 @@ async function executeAction(action) {
         return `Block already exists at target location`;
       }
       case 'equip': {
-        const item = bot.inventory.items().find(i => i.name === parameters.itemName);
-        if (!item) return `No ${parameters.itemName} in inventory`;
-        await bot.equip(item, 'hand');
-        return `Equipped ${parameters.itemName}`;
+        const eqItem = bot.inventory.items().find(i => i.name === parameters.itemName)
+          || bot.inventory.items().find(i => i.name.includes(parameters.itemName));
+        if (!eqItem) return `No ${parameters.itemName} in inventory`;
+        await bot.equip(eqItem, 'hand');
+        return `Equipped ${eqItem.name}`;
       }
       case 'attack': {
         const target = Object.values(bot.entities)
@@ -299,10 +325,11 @@ async function executeAction(action) {
           }
           return `Dropped ${count} items`;
         }
-        const dropItem = bot.inventory.items().find(i => i.name === parameters.itemName);
+        const dropItem = bot.inventory.items().find(i => i.name === parameters.itemName)
+          || bot.inventory.items().find(i => i.name.includes(parameters.itemName));
         if (!dropItem) return `No ${parameters.itemName} in inventory to drop`;
         await bot.toss(dropItem.type, null, dropItem.count);
-        return `Dropped ${dropItem.count} x ${parameters.itemName}`;
+        return `Dropped ${dropItem.count} x ${dropItem.name}`;
       }
       case 'consume': {
         const isFood = (item) => bot.registry.foodsArray.some(f => f.id === item.type);
@@ -435,7 +462,7 @@ async function executeAction(action) {
 async function thinkAndAct() {
   if (isProcessing || (waitingForPlayer && !CONTINUOUS)) return;
   isProcessing = true;
-      console.log('[LOOP] 决策循环开始');
+  console.log('[LOOP] 决策循环开始');
 
   try {
     const state = getState();
@@ -443,6 +470,14 @@ async function thinkAndAct() {
       isProcessing = false;
       return;
     }
+
+    // 跳过无变化的轮询
+    const sig = JSON.stringify({ h: state.health, f: state.food, p: state.position, t: state.currentTask, l: conversationHistory.length });
+    if (sig === prevStateSignature && !state.entities.some(e => e.type === 'hostile')) {
+      isProcessing = false;
+      return;
+    }
+    prevStateSignature = sig;
 
     if (!cachedSystemContent) {
       cachedSystemContent = `${BOT_ROLE}
@@ -482,6 +517,7 @@ ${ACTION_DEFINITIONS.map(a => {
       messages: messages,
       temperature: 0.7,
       max_tokens: 1600,
+      response_format: { type: 'json_object' },
     });
 
     if (!response.choices || response.choices.length === 0) {
@@ -541,7 +577,7 @@ ${ACTION_DEFINITIONS.map(a => {
 
 function startDecisionLoop() {
   const start = () => {
-    bot.chat('LLM Bot online and ready!');
+    bot.chat('LLM 机器人已上线！');
     decisionInterval = setInterval(thinkAndAct, DECISION_INTERVAL);
     console.log(`[BOT] 决策循环已启动 (continuous: ${CONTINUOUS})`);
     if (!CONTINUOUS) console.log('[BOT] 使用 finish() 来等待玩家输入');
