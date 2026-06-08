@@ -9,4 +9,5 @@ export BOT_ROLE="${BOT_ROLE}"
 export DECISION_INTERVAL="${DECISION_INTERVAL:-3000}"
 
 cd "$(dirname "$0")"
-node index.js
+# 默认允许作弊
+CHEAT=true node index.js

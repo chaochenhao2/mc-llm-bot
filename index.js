@@ -34,215 +34,44 @@ let waitingForPlayer = false;
 let decisionInterval = null;
 let currentTask = '';
 let conversationHistory = [];
+let cachedSystemContent = '';
 
 const ACTION_DEFINITIONS = [
-  {
-    name: 'moveTo',
-    description: 'Move the bot to specified coordinates',
-    parameters: {
-      x: { type: 'number', description: 'X coordinate' },
-      y: { type: 'number', description: 'Y coordinate' },
-      z: { type: 'number', description: 'Z coordinate' },
-    },
-  },
-  {
-    name: 'follow',
-    description: 'Follow a player by username',
-    parameters: {
-      username: { type: 'string', description: 'Player username to follow' },
-    },
-  },
-  {
-    name: 'stopFollowing',
-    description: 'Stop following the current target',
-    parameters: {},
-  },
-  {
-    name: 'lookAt',
-    description: 'Look at a specific position or entity',
-    parameters: {
-      x: { type: 'number', description: 'X coordinate' },
-      y: { type: 'number', description: 'Y coordinate' },
-      z: { type: 'number', description: 'Z coordinate' },
-    },
-  },
-  {
-    name: 'chat',
-    description: 'Send a chat message',
-    parameters: {
-      message: { type: 'string', description: 'Message to send' },
-    },
-  },
-  {
-    name: 'mineBlock',
-    description: 'Mine a block at specified coordinates',
-    parameters: {
-      x: { type: 'number', description: 'X coordinate' },
-      y: { type: 'number', description: 'Y coordinate' },
-      z: { type: 'number', description: 'Z coordinate' },
-    },
-  },
-  {
-    name: 'placeBlock',
-    description: 'Place a block from inventory at specified position',
-    parameters: {
-      x: { type: 'number', description: 'X coordinate' },
-      y: { type: 'number', description: 'Y coordinate' },
-      z: { type: 'number', description: 'Z coordinate' },
-      blockName: { type: 'string', description: 'Block type to place (e.g. dirt, stone, oak_planks)' },
-    },
-  },
-  {
-    name: 'equip',
-    description: 'Equip an item from inventory',
-    parameters: {
-      itemName: { type: 'string', description: 'Item name to equip' },
-    },
-  },
-  {
-    name: 'attack',
-    description: 'Attack the nearest entity of a given type',
-    parameters: {
-      entityType: { type: 'string', description: 'Entity type to attack (e.g. zombie, spider, player)' },
-    },
-  },
-  {
-    name: 'collectNearby',
-    description: 'Collect nearby dropped items',
-    parameters: {
-      range: { type: 'number', description: 'Range to search for items (default: 16)' },
-    },
-  },
-  {
-    name: 'goToPlayer',
-    description: 'Navigate to a player by username',
-    parameters: {
-      username: { type: 'string', description: 'Player username to navigate to' },
-    },
-  },
-  {
-    name: 'setTask',
-    description: 'Set a high-level task describing what you are currently doing',
-    parameters: {
-      task: { type: 'string', description: 'Description of current task' },
-    },
-  },
-  {
-    name: 'wait',
-    description: 'Wait/idle for a specified number of seconds',
-    parameters: {
-      seconds: { type: 'number', description: 'Seconds to wait' },
-    },
-  },
-  {
-    name: 'dropItem',
-    description: 'Drop items from inventory by name or all items',
-    parameters: {
-      itemName: { type: 'string', description: 'Item name or "all"' },
-    },
-  },
-  {
-    name: 'consume',
-    description: 'Eat food to restore hunger',
-    parameters: {},
-  },
-  {
-    name: 'sleep',
-    description: 'Sleep in a nearby bed if nighttime',
-    parameters: {},
-  },
-  {
-    name: 'activateBlock',
-    description: 'Interact with a block (door, lever, button, etc.)',
-    parameters: {
-      x: { type: 'number', description: 'X' },
-      y: { type: 'number', description: 'Y' },
-      z: { type: 'number', description: 'Z' },
-    },
-  },
-  {
-    name: 'openContainer',
-    description: 'Open a container (chest, furnace, etc.) at position',
-    parameters: {
-      x: { type: 'number', description: 'X' },
-      y: { type: 'number', description: 'Y' },
-      z: { type: 'number', description: 'Z' },
-    },
-  },
-  {
-    name: 'closeContainer',
-    description: 'Close currently open container',
-    parameters: {},
-  },
-  {
-    name: 'withdraw',
-    description: 'Withdraw items from an open container slot',
-    parameters: {
-      slot: { type: 'number', description: 'Container slot index' },
-      count: { type: 'number', description: 'Amount to withdraw' },
-    },
-  },
-  {
-    name: 'deposit',
-    description: 'Deposit items into an open container',
-    parameters: {
-      itemName: { type: 'string', description: 'Item name to deposit' },
-      count: { type: 'number', description: 'Amount to deposit' },
-    },
-  },
-  {
-    name: 'craft',
-    description: 'Craft items using a crafting table nearby',
-    parameters: {
-      itemName: { type: 'string', description: 'Item to craft (e.g. crafting_table, furnace)' },
-      count: { type: 'number', description: 'Amount to craft' },
-    },
-  },
-  {
-    name: 'farm',
-    description: 'Till soil and plant seeds at position',
-    parameters: {
-      x: { type: 'number', description: 'X' },
-      y: { type: 'number', description: 'Y' },
-      z: { type: 'number', description: 'Z' },
-      seedName: { type: 'string', description: 'Seed item name (e.g. wheat_seeds)' },
-    },
-  },
-  {
-    name: 'breedAnimals',
-    description: 'Breed nearby animals with appropriate food',
-    parameters: {
-      animalType: { type: 'string', description: 'Animal type (e.g. cow, sheep, chicken)' },
-    },
-  },
-  {
-    name: 'fish',
-    description: 'Start fishing',
-    parameters: {},
-  },
-  {
-    name: 'trade',
-    description: 'Trade with a nearby villager using a trade index',
-    parameters: {
-      tradeIndex: { type: 'number', description: 'Index of the trade offer (0-based)' },
-      count: { type: 'number', description: 'How many times to trade' },
-    },
-  },
-  {
-    name: 'finish',
-    description: 'Tells the player your response and stops decision loop until player speaks again',
-    parameters: {
-      message: { type: 'string', description: 'Message to say to the player' },
-    },
-  },
+  { name: 'moveTo', description: 'Move to x,y,z', parameters: { x: { type: 'number', description: 'X' }, y: { type: 'number', description: 'Y' }, z: { type: 'number', description: 'Z' } } },
+  { name: 'follow', description: 'Follow a player', parameters: { username: { type: 'string', description: 'Player name' } } },
+  { name: 'stopFollowing', description: 'Stop following', parameters: {} },
+  { name: 'lookAt', description: 'Look at position', parameters: { x: { type: 'number', description: 'X' }, y: { type: 'number', description: 'Y' }, z: { type: 'number', description: 'Z' } } },
+  { name: 'chat', description: 'Send chat message', parameters: { message: { type: 'string', description: 'Message text' } } },
+  { name: 'mineBlock', description: 'Mine block at x,y,z', parameters: { x: { type: 'number', description: 'X' }, y: { type: 'number', description: 'Y' }, z: { type: 'number', description: 'Z' } } },
+  { name: 'placeBlock', description: 'Place a block', parameters: { x: { type: 'number', description: 'X' }, y: { type: 'number', description: 'Y' }, z: { type: 'number', description: 'Z' }, blockName: { type: 'string', description: 'Block type' } } },
+  { name: 'equip', description: 'Equip item to hand', parameters: { itemName: { type: 'string', description: 'Item name' } } },
+  { name: 'attack', description: 'Attack nearest entity of type', parameters: { entityType: { type: 'string', description: 'Entity type' } } },
+  { name: 'collectNearby', description: 'Pick up dropped items nearby', parameters: { range: { type: 'number', description: 'Search range' } } },
+  { name: 'goToPlayer', description: 'Go to a player', parameters: { username: { type: 'string', description: 'Player name' } } },
+  { name: 'setTask', description: 'Set current task description', parameters: { task: { type: 'string', description: 'Task description' } } },
+  { name: 'wait', description: 'Wait N seconds', parameters: { seconds: { type: 'number', description: 'Seconds' } } },
+  { name: 'dropItem', description: 'Drop items by name', parameters: { itemName: { type: 'string', description: 'Item name or "all"' } } },
+  { name: 'consume', description: 'Eat food to restore hunger', parameters: {} },
+  { name: 'sleep', description: 'Sleep in nearby bed', parameters: {} },
+  { name: 'activateBlock', description: 'Interact with block', parameters: { x: { type: 'number', description: 'X' }, y: { type: 'number', description: 'Y' }, z: { type: 'number', description: 'Z' } } },
+  { name: 'openContainer', description: 'Open chest/furnace/etc', parameters: { x: { type: 'number', description: 'X' }, y: { type: 'number', description: 'Y' }, z: { type: 'number', description: 'Z' } } },
+  { name: 'closeContainer', description: 'Close open container', parameters: {} },
+  { name: 'withdraw', description: 'Take items from container', parameters: { slot: { type: 'number', description: 'Slot index' }, count: { type: 'number', description: 'Amount' } } },
+  { name: 'deposit', description: 'Put items into container', parameters: { itemName: { type: 'string', description: 'Item name' }, count: { type: 'number', description: 'Amount' } } },
+  { name: 'craft', description: 'Craft items at table', parameters: { itemName: { type: 'string', description: 'Item to craft' }, count: { type: 'number', description: 'Amount' } } },
+  { name: 'farm', description: 'Till and plant seeds', parameters: { x: { type: 'number', description: 'X' }, y: { type: 'number', description: 'Y' }, z: { type: 'number', description: 'Z' }, seedName: { type: 'string', description: 'Seed type' } } },
+  { name: 'breedAnimals', description: 'Breed animals with food', parameters: { animalType: { type: 'string', description: 'Animal type' } } },
+  { name: 'fish', description: 'Cast fishing rod', parameters: {} },
+  { name: 'trade', description: 'Trade with villager', parameters: { tradeIndex: { type: 'number', description: 'Trade slot' }, count: { type: 'number', description: 'Times to trade' } } },
+  { name: 'finish', description: 'Reply and wait for player', parameters: { message: { type: 'string', description: 'Reply message' } } },
 ];
 
 if (CHEAT) {
   ACTION_DEFINITIONS.push({
     name: 'command',
-    description: 'Execute a server command as operator (use only when necessary)',
+    description: 'Run server command as op',
     parameters: {
-      command: { type: 'string', description: 'Command to execute (e.g. /give @p diamond 10, /gamemode creative @p)' },
+      command: { type: 'string', description: 'Command text' },
     },
   });
 }
@@ -615,9 +444,8 @@ async function thinkAndAct() {
       return;
     }
 
-    const systemMessage = {
-      role: 'system',
-      content: `${BOT_ROLE}
+    if (!cachedSystemContent) {
+      cachedSystemContent = `${BOT_ROLE}
 
 You are a Minecraft bot that can perceive the world and take actions.
 You must decide what to do autonomously based on your role, current state, and surroundings.
@@ -628,25 +456,26 @@ ${ACTION_DEFINITIONS.map(a => {
   return `### ${a.name}\n${a.description}\nParameters:\n${params || '  none'}`;
 }).join('\n\n')}
 
-## Your Current State
-${JSON.stringify(state, null, 2)}
-
 ## Instructions
 1. Analyze your current situation based on your role and state
-2. Decide what action to take
+2. Decide what to do next
 3. 请用中文思考和回复。
-4. You must respond with valid JSON ONLY, no markdown formatting or code blocks. Use this exact format:
-{"thinking": "Brief reasoning about what to do and why", "actions": [{"name": "actionName", "parameters": {"key": "value"}}]}
-5. You can output multiple actions in one response — all of them will be executed simultaneously in parallel. Use this to combine independent actions.
-6. Be proactive - if your role suggests doing something, do it
-7. Keep actions simple and safe (avoid lava, cliffs, etc.)
-8. Check this history for **[Action]** records - if you have already fulfilled a request, do NOT repeat it. Always check your current inventory to see if the action actually happened.
-9. When you have completed the user's request or have nothing to do, use the **finish** action to reply to the player and stop the loop. Do NOT use finish if you still need to take more actions.
-10. If the player is just chatting or greeting you (not asking you to do anything), use the **chat** action to respond politely, then **finish** to wait for further instructions.${CHEAT ? `
-11. Only use the **command** action when the player asks for cheats or it's absolutely necessary. Prefer normal actions whenever possible.`.trim() : ''}`,
-    };
+4. Respond ONLY with valid JSON in this format:
+{"thinking": "...", "actions": [{"name": "actionName", "parameters": {}}]}
+5. All actions you return will run simultaneously in parallel.
+6. Be proactive — do what your role suggests
+7. Stay safe (avoid lava, cliffs, hostile mobs)
+8. Check [Action] history — if you already did something, don't repeat it
+9. When done or nothing to do, use **finish** to reply and wait.
+10. If the player is just chatting (not asking for a task), use **chat** then **finish**.${CHEAT ? `
+11. Only use **command** when the player asks for cheats. Prefer normal actions.` : ''}`;
+    }
 
-    const messages = [systemMessage, ...conversationHistory.slice(-10)];
+    const messages = [
+      { role: 'system', content: cachedSystemContent },
+      { role: 'system', content: `## Current State\n${JSON.stringify(state, null, 2)}` },
+      ...conversationHistory.slice(-10),
+    ];
 
     const response = await openai.chat.completions.create({
       model: API_MODEL,
