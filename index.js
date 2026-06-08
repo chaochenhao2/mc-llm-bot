@@ -251,7 +251,7 @@ async function waitForServer() {
       console.log(`[BOT] 服务器 ${MC_HOST}:${MC_PORT} 已就绪`);
       return;
     } catch (e) {
-      console.log(`[BOT] 等待服务器 ${MC_HOST}:${MC_PORT}... (${i}/10)`);
+      console.log(`[BOT] 未检测到MC游戏，请检查IP和端口是否开放局域网。(${i}/10)`);
       if (i === 10) {
         console.error(`[BOT] 服务器 ${MC_HOST}:${MC_PORT} 无法连接，已退出`);
         process.exit(1);
