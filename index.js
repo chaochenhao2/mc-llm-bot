@@ -112,7 +112,7 @@ function createBot() {
 
   bot.on('death', () => {
     console.log('[BOT] 死亡！正在重生...');
-    currentTask = 'Respawning after death';
+    currentTask = '死亡后重生中';
   });
 
   bot.on('kicked', (reason) => {
@@ -137,7 +137,7 @@ function createBot() {
     const now = new Date().toLocaleTimeString('zh-CN', { hour12: false });
     const event = `[${now}] [CHAT] ${username}: ${message}`;
     console.log(event);
-    conversationHistory.push({ role: 'user', content: `[${now}] ${username} says: ${message}` });
+    conversationHistory.push({ role: 'user', content: `[${now}] ${username} 说: ${message}` });
     if (conversationHistory.length > 50) conversationHistory.splice(0, 10);
     if (waitingForPlayer) {
       waitingForPlayer = false;
@@ -157,8 +157,6 @@ function getState() {
   if (!entity) return { connected: false };
 
   const pos = entity.position;
-  const yaw = entity.yaw;
-  const pitch = entity.pitch;
 
   const health = bot.health || 20;
   const food = bot.food || 20;
@@ -185,7 +183,7 @@ function getState() {
     .map(p => p.username);
 
   const time = bot.time ? bot.time.timeOfDay : 'unknown';
-  const rainState = bot.isRaining ? 'raining' : 'clear';
+  const rainState = bot.isRaining ? '下雨' : '晴天';
 
   const blockAtFeet = bot.blockAt(entity.position.offset(0, -1, 0));
   const groundBlock = blockAtFeet ? blockAtFeet.name : 'unknown';
@@ -604,6 +602,8 @@ createBot();
 
 process.on('SIGINT', () => {
   console.log('\n正在关闭...');
+  if (decisionInterval) clearInterval(decisionInterval);
+  if (reconnectTimer) clearTimeout(reconnectTimer);
   bot?.quit();
   process.exit(0);
 });
