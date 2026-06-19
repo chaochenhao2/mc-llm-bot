@@ -1,9 +1,14 @@
 #!/bin/bash
-export API_URL="${API_URL:-https://api.openai.com/v1}"
-export API_KEY="${API_KEY:?API_KEY is required}"
-export API_MODEL="${API_MODEL:-gpt-4o}"
+
+# 注意：这里的三个值要改成自己的
+export API_URL="https://api.deepseek.com"
+export API_KEY="YOUR_API_KEY"
+export API_MODEL="deepseek-v4-flash"
+
+
 export MC_HOST="${MC_HOST:-localhost}"
 export MC_PORT="${MC_PORT:-25565}"
+# 注意：MC Java 用户名不能包含下划线，否则会被踢出
 export BOT_NAME="${BOT_NAME:-LLMBot}"
 export BOT_ROLE="${BOT_ROLE}"
 export DECISION_INTERVAL="${DECISION_INTERVAL:-3000}"
